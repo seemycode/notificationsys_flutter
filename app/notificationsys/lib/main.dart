@@ -52,6 +52,8 @@ class _MyHomePageState extends State<MyHomePage> {
                 onPressed: caller.registerToken(),
                 child: const Text('Send push')),
             Text(caller.returnedMessage),
+            Divider(color: Colors.blueGrey),
+            Text(caller.notificationPayload)
           ],
         ),
       ),
@@ -61,6 +63,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
 class APICaller {
   String returnedMessage = "No data";
+  String notificationPayload = "";
 
   registerToken() {
     //TODO: call register token
