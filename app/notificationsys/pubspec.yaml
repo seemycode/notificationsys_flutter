@@ -12,9 +12,12 @@ dependencies:
 
   cupertino_icons: ^1.0.2
 
-  grpc: ^1.0.0
-  protobuf: ^0.11.0
-  uuid: ^1.0.3
+  grpc: ^3.0.2
+  protobuf: ^2.0.0
+
+  firebase_analytics: ^8.3.2
+  firebase_core: ^1.6.0
+  firebase_messaging: ^10.0.7
 
 dev_dependencies:
   flutter_test:
@@ -22,3 +25,4 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  
