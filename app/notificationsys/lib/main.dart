@@ -1,19 +1,18 @@
 import 'dart:async';
 
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:notificationsys/bloc_chat.dart';
+import 'package:notificationsys/bloc_firebase.dart';
+import 'package:notificationsys/src/generated/sm.pbgrpc.dart';
 
-Future<void> _messageHandler(RemoteMessage message) async {
-  print('background message ${message.notification!.body}');
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await BlocFirebase.initFirebase();
+  runApp(NotificationSysApp());
 }
 
-void main() {
-  runApp(MyApp());
-}
-
-class MyApp extends StatelessWidget {
+class NotificationSysApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -35,57 +34,35 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  var caller = new APICaller();
-  late FirebaseMessaging messaging;
-  late String token = "";
+  var _blocFirebase = BlocFirebase();
+  var _blocChat = BlocChat();
 
-  void registerNotification() async {
-    // prints token for testing
-    await Firebase.initializeApp();
-    FirebaseMessaging.onBackgroundMessage(_messageHandler);
-    messaging = FirebaseMessaging.instance;
-    messaging.getToken().then((value) {
-      token = value!;
-      print(value);
-    });
-  }
+  String? _fcmToken;
+  List<String> _messages = [];
 
   @override
   void initState() {
     super.initState();
-    registerNotification();
-
-    FirebaseMessaging.onMessage.listen((event) {
-      print("message received!");
-      print(event.notification!.body);
-    });
-
-    FirebaseMessaging.onMessageOpenedApp.listen((event) {
-      print('Message clicked!');
-    });
+    _blocFirebase.getInitialMessage();
+    _blocFirebase.getToken();
+    _blocFirebase.listenToMessageInForeground();
+    _blocFirebase.listenToMessageInBackground();
   }
 
-  List<String> _messages = [];
+  @override
+  void dispose() {
+    _blocChat.closeStream();
+    _blocFirebase.closeStream();
+  }
 
   @override
   Widget build(BuildContext context) {
     var _text = TextEditingController();
     var _scroll = ScrollController();
-    var _onSubmitted = (text) {
-      //TODO call SendMessage
-      print(_messages.length);
-      setState(() {
-        _messages.add(text);
-      });
-    };
-    var _clearText = () {
-      _text.clear();
-    };
 
-    Timer(
-      Duration(seconds: 1),
-      () => _scroll.jumpTo(_scroll.position.maxScrollExtent),
-    );
+    // Animation to jump to last message
+    Timer(Duration(seconds: 1),
+        () => _scroll.jumpTo(_scroll.position.maxScrollExtent));
 
     return Scaffold(
       appBar: AppBar(
@@ -100,32 +77,45 @@ class _MyHomePageState extends State<MyHomePage> {
               padding: EdgeInsets.all(15.0),
               decoration:
                   BoxDecoration(border: Border.all(color: Colors.black54)),
-              child: Text(
-                'Mensagens',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              child: Row(
+                children: [
+                  Text(
+                    'Mensagens',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  )
+                ],
               ),
             ),
             Expanded(
               flex: 1,
               child: Container(
-                color: Colors.black87,
+                color: Colors.lightBlue,
                 child: ListView.builder(
                   controller: _scroll,
                   padding: EdgeInsets.fromLTRB(12.0, 0.0, 12.0, 0.0),
                   itemCount: _messages.length,
                   itemBuilder: (context, index) {
                     return Card(
-                      color: Colors.blueGrey,
+                      color: Colors.white,
                       elevation: 1.0,
                       child: ListTile(
                         title: Container(
                           padding: EdgeInsets.all(3.0),
-                          child: Text(
-                            _messages[index],
-                            style: TextStyle(
-                              color: Colors.black87,
-                            ),
-                          ),
+                          child: StreamBuilder<StandardResponse>(
+                              stream: _blocChat.sendRequest,
+                              builder: (context, snapshot) {
+                                if (snapshot.hasError) {
+                                  return Text('Failed to retrieve messages');
+                                } else {
+                                  _messages.add(snapshot.data!.status);
+                                  return Text(
+                                    _messages[index],
+                                    style: TextStyle(
+                                      color: Colors.black87,
+                                    ),
+                                  );
+                                }
+                              }),
                         ),
                       ),
                     );
@@ -140,45 +130,55 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
               child: TextField(
                 controller: _text,
-                onSubmitted: _onSubmitted,
+                onSubmitted: _submitMessage,
                 keyboardType: TextInputType.text,
                 textInputAction: TextInputAction.send,
                 decoration: InputDecoration(
                   border: InputBorder.none,
-                  hintText: 'Message',
+                  hintText: 'Type your message',
                   hintStyle: TextStyle(
                       fontStyle: FontStyle.italic, color: Colors.grey.shade600),
                   suffixIcon: IconButton(
-                    onPressed: _clearText,
+                    onPressed: () => _clearNewMessageText(_text),
                     icon: Icon(Icons.clear),
                   ),
                 ),
               ),
             ),
             Container(
+              height: 100,
               padding: EdgeInsets.all(12.0),
-              color: Colors.black54,
-              child: SelectableText(
-                token,
-                style: TextStyle(color: Colors.white),
-              ),
+              color: Colors.black45,
+              child: StreamBuilder<String>(
+                  stream: _blocFirebase.firebaseEcho,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Text(
+                        snapshot.error.toString(),
+                        style: TextStyle(color: Colors.white),
+                      );
+                    } else {
+                      _fcmToken = '${snapshot.data}';
+                      return Text(
+                        '${_fcmToken}',
+                        style: TextStyle(color: Colors.white),
+                      );
+                    }
+                  }),
             ),
           ],
         ),
       ),
     );
   }
-}
 
-class APICaller {
-  String returnedMessage = "No data";
-  String notificationPayload = "";
-
-  registerToken() {
-    //TODO: call register token
+  /// Submit the message to firebase
+  void _submitMessage(msg) {
+    _blocChat.sendMessage(_fcmToken!, msg);
   }
 
-  sendPush() {
-    //TODO: push notification
+  /// Clear new message text field canvas
+  void _clearNewMessageText(field) {
+    field.clear();
   }
 }
